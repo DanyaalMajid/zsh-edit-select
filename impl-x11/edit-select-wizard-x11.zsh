@@ -386,6 +386,10 @@ function _zesw_get_instant_cut_status() {
 	(( EDIT_SELECT_INSTANT_CUT )) && printf "enabled" || printf "disabled"
 }
 
+function _zesw_get_focus_status() {
+	(( EDIT_SELECT_FOCUS_REPORTING )) && printf "enabled" || printf "disabled"
+}
+
 # Validate input
 function _zesw_validate_choice() {
 	local choice="$1"
@@ -407,7 +411,7 @@ function edit-select::save-config() {
 	local -a lines
 	[[ -f "$_EDIT_SELECT_CONFIG_FILE" ]] && lines=("${(@f)$(<$_EDIT_SELECT_CONFIG_FILE)}")
 	lines=("${(@)lines:#${1}=*}")
-	if [[ $1 == EDIT_SELECT_MOUSE_REPLACEMENT ]]; then
+	if [[ $1 == EDIT_SELECT_MOUSE_REPLACEMENT || $1 == EDIT_SELECT_FOCUS_REPORTING ]]; then
 		lines+=("${1}=${2}")
 	else
 		# Quote with (qq) so a manually-entered value containing $(...), backticks
@@ -518,17 +522,19 @@ function edit-select::show-menu() {
 	_zesw_status_line "Platform" "X11"
 	_zesw_status_line "Mouse Replace" "$(_zesw_get_mouse_status)"
 	_zesw_status_line "Instant Cut" "$(_zesw_get_instant_cut_status)"
+	_zesw_status_line "Focus Reporting" "$(_zesw_get_focus_status)"
 
 	_zesw_section_header "Configuration Options"
 	_zesw_print_option 1 "Mouse Replacement     ${_ZESW_CLR_DIM}— Enable/disable mouse replacement${_ZESW_CLR_RESET}"
 	_zesw_print_option 2 "Instant Cut           ${_ZESW_CLR_DIM}— Optional prefix-pruning for instant Ctrl+X mouse cut dispatch${_ZESW_CLR_RESET}"
-	_zesw_print_option 3 "Key Bindings          ${_ZESW_CLR_DIM}— Customize Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X, ...${_ZESW_CLR_RESET}"
+	_zesw_print_option 3 "Focus Reporting       ${_ZESW_CLR_DIM}— Track terminal focus to clear stale selections${_ZESW_CLR_RESET}"
+	_zesw_print_option 4 "Key Bindings          ${_ZESW_CLR_DIM}— Customize Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X, ...${_ZESW_CLR_RESET}"
 	_zesw_separator
-	_zesw_print_option 4 "View Full Configuration"
-	_zesw_print_option 5 "Reset to Defaults"
-	_zesw_print_option 6 "Exit Wizard"
+	_zesw_print_option 5 "View Full Configuration"
+	_zesw_print_option 6 "Reset to Defaults"
+	_zesw_print_option 7 "Exit Wizard"
 
-	_zesw_input_prompt "Choose option (1-6):"
+	_zesw_input_prompt "Choose option (1-7):"
 }
 
 
@@ -643,6 +649,44 @@ function edit-select::configure-instant-cut() {
 		case "$choice" in
 			1) edit-select::set-instant-cut enabled; return ;;
 			2) edit-select::set-instant-cut disabled; return ;;
+			3) return ;;
+		esac
+	done
+}
+
+function edit-select::set-focus-reporting() {
+	local value
+	[[ $1 == enabled ]] && value=1 || value=0
+	_zesw_loading "Applying configuration" 2
+	edit-select::save-config "EDIT_SELECT_FOCUS_REPORTING" "$value"
+	typeset -gi EDIT_SELECT_FOCUS_REPORTING=$value
+	edit-select::apply-mouse-replacement-config
+	(( value )) && _zesw_success "Focus reporting enabled" || _zesw_success "Focus reporting disabled"
+	_zesw_prompt_continue
+}
+
+function edit-select::configure-focus-reporting() {
+	while true; do
+		_zesw_banner
+		_zesw_section_header "Current Setting"
+		_zesw_status_line "Status" "$(_zesw_get_focus_status)"
+		_zesw_info "Tracks terminal focus changes while editing to invalidate stale selections"
+		_zesw_info "Automatically disables reporting before an accepted command runs"
+		_zesw_section_header "Options"
+		_zesw_print_option 1 "Enable   ${_ZESW_CLR_DIM}— Keep focus-aware selection behavior${_ZESW_CLR_RESET}"
+		_zesw_print_option 2 "Disable  ${_ZESW_CLR_DIM}— Do not request terminal focus events${_ZESW_CLR_RESET}"
+		_zesw_separator
+		_zesw_print_option 3 "Back"
+		_zesw_input_prompt "Choose option (1-3):"
+		read -r choice
+		if ! _zesw_validate_choice "$choice" 1 3; then
+			_zesw_error "Invalid choice. Please enter a number between 1-3."
+			_zesw_prompt_continue
+			continue
+		fi
+		case "$choice" in
+			1) edit-select::set-focus-reporting enabled; return ;;
+			2) edit-select::set-focus-reporting disabled; return ;;
 			3) return ;;
 		esac
 	done
@@ -1410,6 +1454,7 @@ function edit-select::reset-config() {
 
 		typeset -gi EDIT_SELECT_MOUSE_REPLACEMENT=1
 		typeset -gi EDIT_SELECT_INSTANT_CUT=0
+		typeset -gi EDIT_SELECT_FOCUS_REPORTING=1
 		typeset -g EDIT_SELECT_KEY_SELECT_ALL="$_EDIT_SELECT_DEFAULT_KEY_SELECT_ALL"
 		typeset -g EDIT_SELECT_KEY_PASTE="$_EDIT_SELECT_DEFAULT_KEY_PASTE"
 		typeset -g EDIT_SELECT_KEY_CUT="$_EDIT_SELECT_DEFAULT_KEY_CUT"
@@ -1464,6 +1509,12 @@ function edit-select::view-config() {
 	else
 		_zesw_status_line "  Instant Cut" "${_ZESW_CLR_DIM}Disabled${_ZESW_CLR_RESET}"
 	fi
+	local focus_status="$(_zesw_get_focus_status)"
+	if [[ $focus_status == "enabled" ]]; then
+		_zesw_status_line "  Focus Reporting" "${_ZESW_CLR_HILITE}Enabled ✓${_ZESW_CLR_RESET}"
+	else
+		_zesw_status_line "  Focus Reporting" "${_ZESW_CLR_DIM}Disabled${_ZESW_CLR_RESET}"
+	fi
 
 	printf "\n  %sKeybindings:%s\n" "$_ZESW_CLR_ACCENT" "$_ZESW_CLR_RESET"
 	_zesw_status_line "  Select All" "${_ZESW_CLR_HILITE}$EDIT_SELECT_KEY_SELECT_ALL${_ZESW_CLR_RESET}"
@@ -1500,6 +1551,9 @@ function edit-select::config-wizard() {
 	if [[ -z $EDIT_SELECT_INSTANT_CUT ]]; then
 		typeset -gi EDIT_SELECT_INSTANT_CUT=0
 	fi
+	if [[ -z $EDIT_SELECT_FOCUS_REPORTING ]]; then
+		typeset -gi EDIT_SELECT_FOCUS_REPORTING=1
+	fi
 
 	# Load current keybindings
 	edit-select::load-keybindings
@@ -1509,8 +1563,8 @@ function edit-select::config-wizard() {
 		edit-select::show-menu
 		read -r choice
 
-		if ! _zesw_validate_choice "$choice" 1 6; then
-			_zesw_error "Invalid choice. Please enter a number between 1-6."
+		if ! _zesw_validate_choice "$choice" 1 7; then
+			_zesw_error "Invalid choice. Please enter a number between 1-7."
 			_zesw_prompt_continue
 			continue
 		fi
@@ -1518,10 +1572,11 @@ function edit-select::config-wizard() {
 		case "$choice" in
 			1) edit-select::configure-mouse-replacement ;;
 			2) edit-select::configure-instant-cut ;;
-			3) edit-select::configure-keybindings ;;
-			4) edit-select::view-config ;;
-			5) edit-select::reset-config ;;
-			6)
+			3) edit-select::configure-focus-reporting ;;
+			4) edit-select::configure-keybindings ;;
+			5) edit-select::view-config ;;
+			6) edit-select::reset-config ;;
+			7)
 				# Exit with success box
 				printf '\033[2J\033[3J\033[H'
 				_zesw_success_box "Configuration Saved"
