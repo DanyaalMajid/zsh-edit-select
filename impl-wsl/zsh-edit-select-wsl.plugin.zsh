@@ -41,6 +41,10 @@ typeset -g _EDIT_SELECT_ACTIVE_SELECTION=""
 typeset -g _EDIT_SELECT_PENDING_SELECTION=""
 # Public config: 1 enables mouse-selection-aware typing (type-to-replace); 0 disables.
 typeset -gi EDIT_SELECT_MOUSE_REPLACEMENT=1
+# Public config: 1 keeps terminal focus reporting enabled during ZLE so focus
+# changes can invalidate stale selections; it is disabled at line-finish before
+# the accepted command is handed to a foreground program.
+typeset -gi EDIT_SELECT_FOCUS_REPORTING=1
 # Path to the user's persistent configuration file (sourced at startup).
 typeset -g _EDIT_SELECT_CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/zsh-edit-select/config"
 # Absolute directory of this plugin file; used to locate backend scripts.
@@ -579,7 +583,8 @@ function edit-select::zle-line-pre-redraw() {
 
 # Re-enable DECSET 1004 on every new prompt so focus events are captured
 # by the bound ZLE widgets.  Persistent (not one-shot) because
-# _zes_disable_focus_reporting suppresses it before every command.
+# _zes_disable_focus_reporting suppresses it when ZLE finishes and again before
+# every command as a defense against integrations that bypass normal hooks.
 function _zes_enable_focus_reporting() {
     print -n '\e[?1004h' >$TTY || true
 }
@@ -612,7 +617,10 @@ function _zes_register_redraw_hook() {
     # handlers so cross-pane selection changes are suppressed.  Registered here
     # (deferred) so the terminal's immediate CSI I reply is consumed by the
     # already-bound widgets instead of printing as raw ^[[I on VTE terminals.
-    add-zle-hook-widget zle-line-init _zes_enable_focus_reporting
+    if ((EDIT_SELECT_FOCUS_REPORTING)); then
+        add-zle-hook-widget zle-line-init _zes_enable_focus_reporting
+        add-zle-hook-widget zle-line-finish _zes_disable_focus_reporting
+    fi
     add-zsh-hook -d precmd _zes_register_redraw_hook
 }
 
@@ -634,7 +642,16 @@ function edit-select::apply-mouse-replacement-config() {
         autoload -Uz add-zsh-hook
         add-zsh-hook precmd _zes_register_redraw_hook
         autoload -Uz add-zsh-hook
-        add-zsh-hook preexec _zes_disable_focus_reporting
+        if ((EDIT_SELECT_FOCUS_REPORTING)); then
+            add-zsh-hook preexec _zes_disable_focus_reporting
+            add-zle-hook-widget zle-line-init _zes_enable_focus_reporting
+            add-zle-hook-widget zle-line-finish _zes_disable_focus_reporting
+        else
+            add-zle-hook-widget -d zle-line-init _zes_enable_focus_reporting 2>/dev/null
+            add-zle-hook-widget -d zle-line-finish _zes_disable_focus_reporting 2>/dev/null
+            add-zsh-hook -d preexec _zes_disable_focus_reporting 2>/dev/null
+            print -n '\e[?1004l' >$TTY || true
+        fi
         bindkey -M emacs '\e[I' _zes_terminal_focus_in
         bindkey -M emacs '\e[O' _zes_terminal_focus_out
         bindkey '\e[I' _zes_terminal_focus_in
@@ -659,6 +676,7 @@ function edit-select::apply-mouse-replacement-config() {
         add-zsh-hook -d precmd _zes_register_redraw_hook 2>/dev/null
         add-zle-hook-widget -d line-pre-redraw edit-select::zle-line-pre-redraw 2>/dev/null
         add-zle-hook-widget -d zle-line-init _zes_enable_focus_reporting 2>/dev/null
+        add-zle-hook-widget -d zle-line-finish _zes_disable_focus_reporting 2>/dev/null
         autoload -Uz add-zsh-hook
         add-zsh-hook -d preexec _zes_disable_focus_reporting 2>/dev/null
         print -n '\e[?1004l' >$TTY || true
